@@ -12,6 +12,7 @@ import com.github.dockerjava.api.command.StartContainerCmd;
 import com.github.dockerjava.api.model.AuthConfig;
 import com.github.dockerjava.api.model.Version;
 import com.google.common.base.Throwables;
+
 import hudson.Extension;
 import hudson.model.Computer;
 import hudson.model.Descriptor;
@@ -45,8 +46,10 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -263,24 +266,52 @@ public class DockerCloud extends Cloud {
     }
 
     private static void adjustContainersInProgress(DockerCloud cloud, DockerTemplate template, int adjustment) {
-        final String cloudId = cloud.name;
-        final String templateId = template.getImage();
+        final String thisCloudId = cloud.name;
+        final String thisTemplateId = template.getImage();
         synchronized (CONTAINERS_IN_PROGRESS) {
-            Map<String, Integer> mapForThisCloud = CONTAINERS_IN_PROGRESS.get(cloudId);
+            Map<String, Integer> mapForThisCloud = CONTAINERS_IN_PROGRESS.get(thisCloudId);
             if (mapForThisCloud == null) {
                 mapForThisCloud = new HashMap<>();
-                CONTAINERS_IN_PROGRESS.put(cloudId, mapForThisCloud);
+                CONTAINERS_IN_PROGRESS.put(thisCloudId, mapForThisCloud);
             }
-            final Integer oldValue = mapForThisCloud.get(templateId);
+            final Integer oldValue = mapForThisCloud.get(thisTemplateId);
             final int oldNumber = oldValue == null ? 0 : oldValue;
             final int newNumber = oldNumber + adjustment;
-            if (newNumber != 0) {
-                mapForThisCloud.put(templateId, newNumber);
+            if (newNumber > 0) {
+                mapForThisCloud.put(thisTemplateId, newNumber);
             } else {
-                mapForThisCloud.remove(templateId);
+                mapForThisCloud.remove(thisTemplateId);
                 if (mapForThisCloud.isEmpty()) {
-                    CONTAINERS_IN_PROGRESS.remove(cloudId);
+                    CONTAINERS_IN_PROGRESS.remove(thisCloudId);
                 }
+            }
+            if ( adjustment<0 ) {
+                /*
+                 * If we've been reconfigured, it's possible that cloud.name or
+                 * the template image will have been changed between increment
+                 * and decrement, so we need to "prune" any dangling records for
+                 * clouds that no longer exist or images without templates.
+                 */
+                final Set<String> allCloudIdsOnRecord = CONTAINERS_IN_PROGRESS.keySet();
+                final Set<String> cloudIdsToForgetAbout = new HashSet<>(allCloudIdsOnRecord);
+                for (final DockerCloud aDockerCloud : instances()) {
+                    final String aCloudId = aDockerCloud.name;
+                    final Map<String, Integer> mapForACloud = CONTAINERS_IN_PROGRESS.get(aCloudId);
+                    if (mapForACloud == null) {
+                        continue;
+                    }
+                    final Set<String> allTemplateIdsOnRecord = mapForACloud.keySet();
+                    final Set<String> recordedButNoLongerKnownTemplateIds = new HashSet<>(allTemplateIdsOnRecord);
+                    for (final DockerTemplate aDockerTemplate : aDockerCloud.getTemplates()) {
+                        final String aTemplateId = aDockerTemplate.getImage();
+                        recordedButNoLongerKnownTemplateIds.remove(aTemplateId);
+                    }
+                    allTemplateIdsOnRecord.removeAll(recordedButNoLongerKnownTemplateIds);
+                    if (!allTemplateIdsOnRecord.isEmpty()) {
+                        cloudIdsToForgetAbout.remove(aCloudId);
+                    }
+                }
+                allCloudIdsOnRecord.removeAll(cloudIdsToForgetAbout);
             }
         }
     }
