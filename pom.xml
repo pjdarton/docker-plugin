@@ -219,6 +219,14 @@
     <build>
         <plugins>
             <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <compilerArgs>
+                        <arg>-Xlint:all,-deprecation,-fallthrough,-path,-serial,-static</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+            <plugin>
                 <artifactId>maven-javadoc-plugin</artifactId>
                 <configuration>
                     <failOnError>false</failOnError>
